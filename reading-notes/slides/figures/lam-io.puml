@@ -1,4 +1,5 @@
 @startuml LAMIO
+skinparam svgLinkTarget _blank
 left to right direction
 skinparam backgroundColor #FFFFFF
 skinparam defaultFontSize 20
@@ -8,15 +9,13 @@ skinparam rectangle {
 }
 skinparam arrowColor #555555
 scale 0.60
-rectangle "Frames (t,t+1)" as IN
-rectangle "Action Code (ã_t)" as OUT
+rectangle "Frames (x_1..x_t, x_{t+1})" as IN
+rectangle "Latent Actions (ã_1..ã_t)" as OUT
 rectangle "Latent Action Model" as LAM {
-	rectangle "Pair\nEncoder" as L1
-	rectangle "Diff\nExtractor" as L2
-	rectangle "Codebook\nLookup" as L3
+	rectangle "ST Seq\nEncoder" as L1
+	rectangle "VQ\nQuantize" as L2
 	L1 --> L2
-	L2 --> L3
 }
 IN --> L1
-L3 --> OUT
+L2 --> OUT
 @enduml

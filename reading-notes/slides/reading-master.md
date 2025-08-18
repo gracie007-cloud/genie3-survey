@@ -70,7 +70,7 @@ At training time Genie ingests raw frame sequences and splits responsibility acr
 
 	![Tokenizer I/O](./figures/TokenizerIO.svg)
 
-* **Latent Action Model (LAM)**: Given two consecutive frames (or their encoded forms), infers a *discrete* latent action code \(\tilde{a}_t\) representing the transformation between them (e.g., movement, jump). Uses a tiny codebook (|A|=8) encouraging semantic stability; reconstruction head used only for training.
+* **Latent Action Model (LAM)**: ST-transformer over prior frames plus next frame (pixels) produces latent actions \(\tilde{a}_{1:t}\), vector-quantized into a tiny discrete codebook (|A|=8) chosen for playability & controllability (paper lines 178–179, 248). Trained with VQ-VAE objective + reconstruction decoder (training-only); at inference encoder/decoder are discarded and user supplies discrete action index \(a_t\) whose embedding (codebook lookup) conditions dynamics. Pixel inputs outperform token inputs for controllability (lines 333–335).
 
 	![LAM I/O](./figures/LAMIO.svg)
 
