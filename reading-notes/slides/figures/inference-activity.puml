@@ -1,0 +1,13 @@
+@startuml InferenceActivity
+start
+:Provide prompt frame(s) x1;
+:Tokenize prompt -> z1;
+repeat
+:Select latent action a_t\n(User or Agent);
+:Lookup action embedding via codebook;
+:Predict next frame tokens z_{t+1}\n(MaskGIT iterative refinement);
+:Decode tokens -> frame x_{t+1};
+:Render / display frame;
+repeat while (Continue?\nStop condition met?) is (no)
+stop
+@enduml

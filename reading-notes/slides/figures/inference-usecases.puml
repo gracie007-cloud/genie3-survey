@@ -1,0 +1,49 @@
+@startuml InferenceUseCases
+' Refined Use Case Diagram for Genie Inference Loop
+left to right direction
+skinparam usecase {
+  BackgroundColor #F9FBFF
+  BorderColor #4472C4
+  ArrowColor #555555
+}
+
+actor Player as P
+actor Agent as A
+
+rectangle "Genie System" as SYS {
+  usecase "Provide Prompt" as Prompt
+  usecase "Select Latent Action" as SelectAction
+  usecase "Generate Next Frame" as Generate
+  usecase "Predict Latent Tokens" as Predict <<internal>>
+  usecase "Decode Video Frame" as Decode <<internal>>
+  usecase "View Updated Frame" as View
+}
+
+P --> Prompt
+P --> SelectAction
+A --> SelectAction : <<alternative controller>>
+
+' Action selection triggers frame generation (includes internal steps)
+SelectAction .> Generate : <<include>>
+Generate .> Predict : <<include>>
+Generate .> Decode : <<include>>
+Generate --> View
+P --> View
+A --> View : optional
+
+note right of SelectAction
+Discrete a_t ∈ {0..|A|-1}\n(codebook index; learned semantics)
+end note
+
+note bottom of Predict
+ST MaskGIT dynamics\nconditioned on past tokens + action embedding
+end note
+
+note bottom of View
+Loop over (SelectAction → Generate → View) until termination\n(episode horizon or user stops)
+end note
+
+legend right
+<<internal>> implementation detail (not directly invoked by actors)
+end legend
+@enduml
