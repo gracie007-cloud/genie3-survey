@@ -105,8 +105,8 @@ Figure: `LAM_architecture.png`
 ![LAM Architecture](../../papers/genie-tex/figures/LAM_architecture.png)
 
 Essentials:
-* Input: consecutive raw frames (x_t, x_{t+1}) in pixel space (empirically better control than token inputs).
-* Stages: dual-frame encode → interaction/diff module → latent projection → VQ (|A|=8) → (training-only) recon head.
+* Input: full pixel frame context \(x_{1:t}, x_{t+1}\) (raw frames; pixel input yields better controllability than token inputs per ablation).
+* Stages: sequence ST encoder (causal over time) → latent action logits for all steps \(\tilde{a}_{1:t}\) → VQ codebook (|A|=8) → (training-only) reconstruction head.
 * Output: discrete action index a_t + embedding ã_t (only embedding lookup used at inference).
 * Why tiny codebook: forces semantic reuse, amplifies per-code influence (higher ΔPSNR).
 * Losses: VQ (commitment + codebook) + reconstruction; diversity encouraged implicitly by small |A|.
