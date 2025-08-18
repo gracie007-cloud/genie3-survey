@@ -1,0 +1,22 @@
+@startuml DynamicsIO
+left to right direction
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontSize 20
+skinparam rectangle {
+	BackgroundColor #F5FFF9
+	BorderColor #44C46A
+}
+skinparam arrowColor #555555
+scale 0.60
+rectangle "History (z_{1:t}, ã_{1:t})" as IN
+rectangle "Next Tokens (z_{t+1})" as OUT
+rectangle "Dynamics Model" as DYN {
+	rectangle "Masked\nInit" as D1
+	rectangle "Iterative\nRefine" as D2
+	rectangle "Final\nDecode" as D3
+	D1 --> D2
+	D2 --> D3
+}
+IN --> D1
+D3 --> OUT
+@enduml

@@ -34,7 +34,13 @@ This section describes ONLY the runtime (inference) interaction loop—how a use
 
 These quotes (Inference: Action-Controllable Video Generation section) define the inference contract we model below.
 
-### 3.2 Inference Inputs
+### 3.2 Inference Inputs & Outputs
+
+![Figure: Genie Inference](../../papers/genie-tex/figures/genie_inference.png)
+*Figure (Genie Inference):* the prompt frame is tokenized, combined with the latent action taken by the user, and passed to the dynamics model for iterative generation. The predicted frame tokens are then decoded back to image space via the tokenizer's decoder.
+
+
+Inputs:
 * **Prompt Frame(s)**: One (or few) initial image(s). Can be:
 	- Hand-drawn sketch
 	- Text-to-image output
@@ -45,62 +51,85 @@ These quotes (Inference: Action-Controllable Video Generation section) define th
 	- Learned policy / agent (automated control)
 * **(Optional) Stopping Condition**: User stop, max frames, or environment-specific termination.
 
-### 3.3 Inference Outputs
+Outputs:
 * **Next Frame (RGB)**: Decoded visual frame `x_{t+1}` for display.
-* **Updated Internal State (Implicit)**:
-	- Appended token history `z_{1:t+1}` (not surfaced to user directly).
+* **Updated Internal State (Implicit)**: Appended token history `z_{1:t+1}` (not surfaced to user directly).
 * **Interactive Trajectory**: Sequence of rendered frames forming a controllable rollout.
-
-### 3.4 Black-Box Contract (Simplified API View)
-Inputs: `(prompt_frame, action_sequence_stream)`  
-Outputs: `stream_of_generated_frames` (1 frame per chosen action)  
-Determinism: Stochastic due to sampling (e.g. MaskGIT temperature).  
-Latency: Currently ~1 FPS (paper limitation).
 
 ### 3.5 Activity Diagram
 Source: `figures/inference-activity.puml`  
 Rendered: ![Activity Diagram](./figures/InferenceActivity.svg)
 
-### 3.6 Use Case Diagram
-Source: `figures/inference-usecases.puml`  
-Rendered: ![Use Case Diagram](./figures/InferenceUseCases.svg)
-<sub>Refined: Player/Agent choose a discrete latent action; generation wraps internal Predict/Decode steps via include relations; loop is conceptual (not a separate use case).</sub>
+## 4. Architecture Overview
+![Figure 2: Genie Model Training Architecture](./figures/genie_architecture.png)
+*Figure 2 (Genie model training — original caption):* **Genie model training:** Genie takes in $T$ frames of video as input, tokenizes them into discrete tokens $z$ via the video tokenizer, and infers the latent actions $\tilde{a}$ between each frame with the latent action model. Both are then passed to the dynamics model to generate predictions for the next frames in an iterative manner.
 
-### 3.7 Step-by-Step Inference Flow (Narrative)
-1. **Prompt**: User supplies initial frame `x_1` (any style).  
-2. **Tokenization**: Video tokenizer encodes `x_1` → `z_1` (causal temporal context trivial at t=1).  
-3. **Action Choice**: User/agent picks latent action index `a_1` (no predefined semantics; discovered empirically).  
-4. **Embedding Retrieval**: Index into action VQ codebook → embedding `ã_1`.  
-5. **Prediction**: Dynamics model consumes `(z_1, ã_1)` plus history → predicts masked tokens for frame 2 (iterative MaskGIT refinement).  
-6. **Decoding**: Predicted tokens decoded to RGB frame `x_2`.  
-7. **Render**: Frame displayed; loop returns to step 3 for next action until stop condition.  
-8. **Termination**: User halts, frame budget exhausted, or external criterion met.
+### 4.1 High-Level Overview
+At training time Genie ingests raw frame sequences and splits responsibility across three tightly coupled components that all share the ST (spatial–temporal) Transformer design:
+* **Video Tokenizer (VQ-VAE with ST attention)**: Converts each incoming frame (plus limited causal temporal context) into a grid of discrete tokens \(z_t\). Temporal awareness (causal attn over same spatial patch index) improves efficiency vs full 3D attention.
 
-### 3.8 Key Properties
-* **Frame-Level Controllability**: Every latent action immediately influences next frame (cited sentences above).
-* **Consistency of Code Semantics**: Action meanings persist across prompts (paper note on learning controller buttons).
-* **Open-Ended Prompting**: Accepts OOD visual prompts (sketches, photos) still enabling play.
-* **Autoregressive Dependency**: Each token prediction conditioned on full prior token + action history.
+	![Tokenizer I/O](./figures/TokenizerIO.svg)
+
+* **Latent Action Model (LAM)**: Given two consecutive frames (or their encoded forms), infers a *discrete* latent action code \(\tilde{a}_t\) representing the transformation between them (e.g., movement, jump). Uses a tiny codebook (|A|=8) encouraging semantic stability; reconstruction head used only for training.
+
+	![LAM I/O](./figures/LAMIO.svg)
+
+* **Dynamics Model (ST MaskGIT Transformer)**: Autoregressively predicts the *next frame tokens* conditioned on past tokens and the selected (or inferred during training) latent action embedding. Uses iterative masked token refinement for sharper, globally consistent predictions.
+
+	![Dynamics I/O](./figures/DynamicsIO.svg)
 
 ---
-This re-focused section excludes training data details to emphasize *runtime* usage and user/agent interaction.
 
-## 4. Architecture Overview
-**(a) Video Tokenizer (ST-ViViT VQ-VAE)**
-* Causal temporal attention + spatial attention; produces discrete tokens z_t.
+### 4.2 Video Tokenizer Architecture (ST‑ViViT VQ‑VAE)
+Figure: `tokenizer_architecture.png`
 
-**(b) Latent Action Model (LAM)**
-* Encoder gets x_{1:t} and x_{t+1}; outputs continuous latent → VQ code (ã_t).
-* Auxiliary decoder reconstructs x_{t+1}; only codebook kept at inference.
-* Pixel input (vs token input) improves controllability (higher ΔPSNR).
+![Tokenizer Architecture](../../papers/genie-tex/figures/tokenizer_architecture.png)
 
-**(c) Dynamics Model (ST MaskGIT)**
-* Inputs: past tokens z, latent action embeddings ã.
-* Iterative masked token prediction (≈25 refinement steps, temp≈2).
-* Additive action embeddings (not concatenation) → stronger control.
+Internal ST Transformer Block (as used inside the tokenizer and shared design across modules):
 
-**ST Block Design**
-* Spatial self-attn (per frame) → Temporal causal self-attn (same patch index over time) → single FFN.
+![ST Transformer Block](../../papers/genie-tex/figures/sttransformer.png)
+
+Block: Spatial attn → causal temporal attn (same patch index) → FFN (residual + LN) for linear temporal scaling.
+
+Essentials:
+* Input: frame sequence.
+* Stages: patch embed → spatial blocks → causal temporal attn → VQ bottleneck → (decoder for training only).
+* Output: discrete token grid z_t.
+* Why: efficient temporal modeling, discrete interface for masking & control, compact codebook.
+
+Notes: small codebook balances fidelity/efficiency; bfloat16 + QK norm for stability.
+
+### 4.3 Latent Action Model (LAM) Architecture
+Figure: `LAM_architecture.png`
+
+![LAM Architecture](../../papers/genie-tex/figures/LAM_architecture.png)
+
+Essentials:
+* Input: consecutive raw frames (x_t, x_{t+1}) in pixel space (empirically better control than token inputs).
+* Stages: dual-frame encode → interaction/diff module → latent projection → VQ (|A|=8) → (training-only) recon head.
+* Output: discrete action index a_t + embedding ã_t (only embedding lookup used at inference).
+* Why tiny codebook: forces semantic reuse, amplifies per-code influence (higher ΔPSNR).
+* Losses: VQ (commitment + codebook) + reconstruction; diversity encouraged implicitly by small |A|.
+* Inference: model skipped; controller supplies a_t directly.
+
+### 4.4 Dynamics Model Architecture (ST MaskGIT Transformer)
+Figure: `dynamics_architecture.png`
+
+![Dynamics Architecture](../../papers/genie-tex/figures/dynamics_architecture.png)
+
+Essentials:
+* Input: past token grids z_{≤t} (each z_k is a discrete H×W grid of VQ token IDs produced by the video tokenizer for frame k) + current action embedding ã_t.
+* Loop (per frame): mask init → iterative MaskGIT refinements (≈25) → additive action conditioning each step → spatial attn → temporal causal attn → FFN → logits → unmask until complete.
+* Output: next token grid z_{t+1} (decoded to RGB via tokenizer decoder when needed).
+* Why iterative: parallel token filling + global consistency vs strictly autoregressive order.
+* Control: additive ã_t modulation yields immediate, smooth per-frame influence.
+* Shared block: spatial attn → temporal causal attn → FFN (same ST pattern as tokenizer/LAM internals).
+
+Mask (MaskGIT) concept:
+* Placeholder token for unknown positions.
+* Start high mask ratio (often 100%).
+* Predict all positions in parallel; reveal (replace) high-confidence masks each iteration.
+* Continue until no masks remain (produces final z_{t+1}).
 
 ## 5. Training Pipeline
 1. Pretrain tokenizer (VQ-VAE) on clips (recon + commitment losses).
@@ -109,61 +138,52 @@ This re-focused section excludes training data details to emphasize *runtime* us
 	 * Dynamics: cross-entropy on tokens with random masking rate U[0.5,1].
 3. Inference: encode prompt frame → user selects action index each step → lookup embedding → predict next tokens → decode frame.
 
-**Optimization & Scaling**
-* Larger params & batch → monotonic loss reductions.
-* Stabilization: bfloat16, QK norm.
-* Final model: ~10.7–11B params (≈942B tokens seen, 125k steps).
+### 5.1 Detailed Component Training Flow
 
-**Robustness Choices**
-* Random masking (denoising effect).
-* Tiny action vocabulary → high semantic influence per code.
+Data construction (base corpus):
+* Collect raw Internet gameplay + robotics videos.
+* Slice into fixed-length clips (e.g., 16–32 frames) with frame resizing & normalization.
+* Maintain chronological order; no action labels required.
 
-## 6. Metrics
-* **FVD**: video fidelity.
-* **ΔPSNR (controllability)**: PSNR(real, inferred-actions) − PSNR(real, random-actions); higher ⇒ actions matter more.
+Stage A — Video Tokenizer Pretraining (frozen later):
+* Input: RGB clip.
+* Optimize reconstruction loss (L1 / perceptual) + VQ commitment & codebook update.
+* Output: encoder + codebook + decoder; retain encoder + codebook for downstream, freeze weights.
+* Dataset requirement: only frames (no pairing beyond temporal sequencing).
 
-## 7. Results Snapshot
-**Qualitative**
-* OOD prompts (sketches, photos, text-generated) become playable.
-* Robotics: coherent arm motions, object deformation (chips bag).
-* Emergent parallax & depth layering.
+Intermediate dataset artifact:
+* For each frame in corpus, store its discrete token grid z (can be on-the-fly to save storage if fast enough).
 
-**Quantitative / Ablations**
-* ST-ViViT tokenizer FVD=81.4 vs ViT 114.5 & C-ViViT 272.7 (similar params).
-* Pixel LAM ΔPSNR > token-input LAM (1.91 vs 1.33 Platformers).
-* Scaling: smooth downward training loss with params & batch.
+Stage B — Joint LAM + Dynamics:
+* LAM branch inputs: (x_t, x_{t+1}) raw frames.
+* LAM losses: reconstruction (predict x_{t+1}), VQ (commitment + codebook). Produces action code index a_t and embedding ã_t.
+* Dynamics branch inputs: token sequences z_{≤t} (from frozen tokenizer) + corresponding latent action embeddings ã_{≤t-1}.
+* Dynamics loss: cross-entropy over predicted next frame tokens with random masking schedule U[0.5,1] on target frame tokens to enable iterative refinement behavior.
+* Parameter update: LAM + Dynamics (tokenizer encoder & decoder remain frozen).
 
-**Policy Transfer**
-* Latent-labelled CoinRun demos + small mapping dataset (≈200 samples) → oracle-level BC performance.
+Action code supervision signal:
+* Emerges solely from reconstruction + downstream dynamics consistency; no explicit behavior labels.
 
-## 8. Emergent Capabilities
-* Stable latent action semantics across vastly different visual domains.
-* Parallax-like multi-layer motion from single 2D prompt.
-* Physical plausibility cues (deformables) from pure video data.
+Why this order:
+* Stable discrete visual vocabulary (tokenizer) is prerequisite so LAM & Dynamics learn over a fixed token space.
+* Joint LAM + Dynamics encourages action codes to maximize future token predictability (functional semantics).
 
-## 9. Limitations
-* Short temporal context (16 frames) → limited long-horizon coherence.
-* ~1 FPS generation → not yet real-time.
-* Occasional hallucinations / drift over long rollouts.
-* Latent action semantics unlabeled; requires user discovery.
+## 7. Results 
 
-## 10. Future Directions
-* Longer context / hierarchical memory.
-* Faster decoding (distillation, speculative multi-frame prediction).
-* Larger, more diverse Internet video corpora (generalist world model).
-* Hierarchical or compositional action vocabularies.
-* Integration with agent training loops (planning, RL fine-tuning).
+![Diverse trajectories](./figures/platformer_trajectories.png)
+*Figure (Diverse trajectories):* Genie is a generative model that can be used as an interactive environment. The model can be prompted in various ways, either with a generated image (top) or a hand-drawn sketch (bottom). At each time step, the model takes a user-provided latent action to generate the next frame, producing trajectories with interesting and diverse character actions.
 
-## 11. Broader Impact / Safety Notes
-* Creative empowerment vs IP provenance & bias risks.
-* Need moderation & safe deployment, especially for robotics.
-* Transparent dataset sourcing & usage policies crucial.
+![Playing from Image Prompts](./figures/actions_emergent.png)
+*Figure (Playing from Image Prompts):* We can prompt Genie with images generated by text-to-image models, hand-drawn sketches or real-world photos. In each case we show the prompt frame and a second frame after taking one of the latent actions four consecutive times. In each case we see clear character movement, despite some of the images being visually distinct from the dataset.
 
-## 12. Quick Glossary
-* **Latent Action**: Discrete VQ code summarizing inter-frame change.
-* **Video Token**: Discrete spatiotemporal patch embedding.
-* **ST Block**: Spatial attn + causal temporal attn + single FFN.
-* **MaskGIT Steps**: Iterative masked token refinement cycles.
+![Learning to simulate deformable objects](./figures/chips.png)
+*Figure (Learning to simulate deformable objects):* we show frames from a ten step trajectory in the model, taking the same action. Genie is capable of learning the physical properties of objects such as bags of chips.
 
----
-Figure source images already exist under `papers/genie-tex/figures/`; reused directly without duplication.
+![Emulating parallax](./figures/parallax_new.png)
+*Figure (Emulating parallax):* Emulating parallax, a common feature in platformer games. From this initial text-generated image, the foreground moves more than the near and far middle ground, while the background moves only slightly.
+
+![Controllable, consistent latent actions in Robotics](./figures/action_grid_robotics.png)
+*Figure (Controllable, consistent latent actions in Robotics):* trajectories beginning from three different starting frames from our Robotics dataset. Each column shows the resulting frame from taking the same latent action five times. Despite training without action labels, the same actions are consistent across varied prompt frames and have semantic meaning: down, up and left.
+
+![Playing from RL environments](./figures/coinrun_traj.png)
+*Figure (Playing from RL environments):* Genie can generate diverse trajectories given an image of an unseen RL environment.

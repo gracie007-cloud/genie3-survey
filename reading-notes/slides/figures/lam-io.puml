@@ -1,0 +1,22 @@
+@startuml LAMIO
+left to right direction
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontSize 20
+skinparam rectangle {
+	BackgroundColor #FFF9F5
+	BorderColor #C46A44
+}
+skinparam arrowColor #555555
+scale 0.60
+rectangle "Frames (t,t+1)" as IN
+rectangle "Action Code (ã_t)" as OUT
+rectangle "Latent Action Model" as LAM {
+	rectangle "Pair\nEncoder" as L1
+	rectangle "Diff\nExtractor" as L2
+	rectangle "Codebook\nLookup" as L3
+	L1 --> L2
+	L2 --> L3
+}
+IN --> L1
+L3 --> OUT
+@enduml

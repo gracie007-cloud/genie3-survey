@@ -1,0 +1,22 @@
+@startuml TokenizerIO
+left to right direction
+skinparam backgroundColor #FFFFFF
+skinparam defaultFontSize 20
+skinparam rectangle {
+	BackgroundColor #F9FBFF
+	BorderColor #4472C4
+}
+skinparam arrowColor #555555
+scale 0.60
+rectangle "Input Frames" as IN
+rectangle "Token IDs (z_t)" as OUT
+rectangle "Tokenizer" as TOK {
+	rectangle "Frame\nEncoder" as T1
+	rectangle "ST\nAttention" as T2
+	rectangle "VQ\nQuantize" as T3
+	T1 --> T2
+	T2 --> T3
+}
+IN --> T1
+T3 --> OUT
+@enduml
